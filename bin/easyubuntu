@@ -141,8 +141,9 @@ desktop_ui_create() {
     fi
   fi
 
-  icon="$(desktop_choose_icon_from_container "$container_dir" || true)"
+  desktop_choose_icon_from_container "$container_dir"
   exit_if_cancelled
+  icon="${UI_RESULT:-}"
   ui_input "Create .desktop" "Comment (optional)" ""
   exit_if_cancelled
   comment="${UI_RESULT:-}"

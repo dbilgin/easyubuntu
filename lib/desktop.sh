@@ -56,14 +56,22 @@ desktop_render_image_preview() {
   fi
 
   if command -v chafa >/dev/null 2>&1; then
-    # Best-effort: may include ANSI escapes depending on terminal.
-    if chafa -s 60x20 "$path" 2>/dev/null; then
+    # Best-effort: render as plain ASCII (whiptail-friendly).
+    if command -v timeout >/dev/null 2>&1; then
+      if timeout 2s chafa --colors none --symbols ascii -s 60x20 "$path" 2>/dev/null; then
+        return 0
+      fi
+    elif chafa --colors none --symbols ascii -s 60x20 "$path" 2>/dev/null; then
       return 0
     fi
   fi
 
   if command -v viu >/dev/null 2>&1; then
-    if viu -w 60 "$path" 2>/dev/null; then
+    if command -v timeout >/dev/null 2>&1; then
+      if timeout 2s viu -w 60 "$path" 2>/dev/null; then
+        return 0
+      fi
+    elif viu -w 60 "$path" 2>/dev/null; then
       return 0
     fi
   fi
@@ -71,45 +79,95 @@ desktop_render_image_preview() {
   if command -v file >/dev/null 2>&1; then
     printf "%s\n" "$path"
     file -b -- "$path" 2>/dev/null || true
+    printf "\nTip: install `chafa` to preview images in-terminal:\n"
+    printf "  sudo apt-get update && sudo apt-get install -y chafa\n"
   else
     printf "%s\n" "$path"
     printf "(no terminal image preview tool found)\n"
   fi
 }
 
+desktop__find_first() {
+  # Sets UI_RESULT to the first matching file (or empty) and returns 0.
+  # Arguments: <container_dir> <find-args...>
+  local container_dir="$1"
+  shift 1
+
+  UI_RESULT=""
+
+  local found=""
+  if command -v timeout >/dev/null 2>&1; then
+    while IFS= read -r -d '' found; do
+      break
+    done < <(timeout 6s find "$container_dir" "$@" -print0 -quit 2>/dev/null || true)
+  else
+    while IFS= read -r -d '' found; do
+      break
+    done < <(find "$container_dir" "$@" -print0 -quit 2>/dev/null || true)
+  fi
+
+  UI_RESULT="$found"
+  return 0
+}
+
+desktop_find_best_icon_candidate() {
+  # Sets UI_RESULT to best match, or empty if none.
+  local container_dir="$1"
+  UI_RESULT=""
+  [[ -d "$container_dir" ]] || return 0
+
+  # 1) Exact icon.* with common extensions
+  desktop__find_first "$container_dir" -type f \( \
+    -iname "icon.png" -o -iname "icon.jpg" -o -iname "icon.jpeg" -o -iname "icon.svg" -o -iname "icon.webp" -o -iname "icon.gif" -o -iname "icon.ico" \
+  \)
+  [[ -n "${UI_RESULT:-}" ]] && return 0
+
+  # 2) Anything containing 'icon' in the name with common extensions
+  desktop__find_first "$container_dir" -type f \( \
+    -iname "*icon*.png" -o -iname "*icon*.jpg" -o -iname "*icon*.jpeg" -o -iname "*icon*.svg" -o -iname "*icon*.webp" -o -iname "*icon*.gif" -o -iname "*icon*.ico" \
+  \)
+  [[ -n "${UI_RESULT:-}" ]] && return 0
+
+  # 3) Any image file
+  desktop__find_first "$container_dir" -type f \( \
+    -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.svg" -o -iname "*.webp" -o -iname "*.gif" -o -iname "*.ico" \
+  \)
+  return 0
+}
+
 desktop_choose_icon_from_container() {
   local container_dir="$1"
-  [[ -d "$container_dir" ]] || { printf "%s\n" ""; return 0; }
+  UI_CANCELLED=0
+  UI_RESULT=""
+  [[ -d "$container_dir" ]] || return 0
 
-  local any=0
-  local candidate preview
-  while IFS= read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    any=1
-    preview="$(desktop_render_image_preview "$candidate")"
-    ui_textbox "Icon preview" "$preview"
-    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
-      # Esc pressed on preview: abort icon selection (continue create flow with no icon).
-      printf "%s\n" ""
-      return 0
-    fi
-    if ui_yesno "Use this icon?" "$candidate"; then
-      printf "%s\n" "$candidate"
-      return 0
-    fi
-    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
-      # Esc pressed on yes/no: abort icon selection (continue create flow with no icon).
-      printf "%s\n" ""
-      return 0
-    fi
-  done < <(desktop_find_image_candidates "$container_dir")
+  # Best-effort: show something while searching (non-blocking).
+  if ui_has_whiptail; then
+    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "EasyUbuntu" --infobox "Searching for an icon in:\n\n$container_dir" 10 70
+  fi
 
-  if [[ "$any" -eq 0 ]]; then
+  desktop_find_best_icon_candidate "$container_dir"
+  local candidate="${UI_RESULT:-}"
+  if [[ -z "$candidate" ]]; then
+    UI_RESULT=""
     return 0
   fi
 
-  # User rejected all.
-  printf "%s\n" ""
+  local preview
+  preview="$(desktop_render_image_preview "$candidate")"
+  ui_textbox "Icon preview (OK = continue)" "$preview"
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+    UI_RESULT=""
+    return 0
+  fi
+
+  if ui_yesno "Use this icon?" "$candidate"; then
+    UI_RESULT="$candidate"
+    return 0
+  fi
+  # No => just proceed without icon (keeps the flow snappy).
+  UI_RESULT=""
+  return 0
 }
 
 slugify() {
