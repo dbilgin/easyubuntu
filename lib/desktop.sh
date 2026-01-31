@@ -79,7 +79,7 @@ desktop_render_image_preview() {
   if command -v file >/dev/null 2>&1; then
     printf "%s\n" "$path"
     file -b -- "$path" 2>/dev/null || true
-    printf "\nTip: install `chafa` to preview images in-terminal:\n"
+    printf "\nTip: install chafa to preview images in-terminal:\n"
     printf "  sudo apt-get update && sudo apt-get install -y chafa\n"
   else
     printf "%s\n" "$path"
