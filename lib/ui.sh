@@ -48,9 +48,14 @@ ui_msg() {
   if ui_has_whiptail; then
     UI_CANCELLED=0
     UI_RESULT=""
-    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --msgbox "$msg" 12 78
-    # msgbox has only OK; treat non-zero as cancelled but never propagate failure.
-    if [[ "$?" -ne 0 ]]; then UI_CANCELLED=1; fi
+    local rc was_errexit=0
+    case "$-" in *e*) was_errexit=1 ;; esac
+    set +e
+    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --ok-button "OK" --msgbox "$msg" 12 78
+    rc=$?
+    if [[ "$was_errexit" -eq 1 ]]; then set -e; fi
+    # msgbox has only OK; treat Esc as cancelled but never propagate failure.
+    if [[ "$rc" -ne 0 ]]; then UI_CANCELLED=1; fi
     return 0
   else
     printf "\n== %s ==\n%s\n\n" "$title" "$msg"
@@ -64,11 +69,17 @@ ui_error() {
 ui_yesno() {
   local title="${1:-Confirm}"
   local msg="${2:-Are you sure?}"
+  local yes_label="${3:-Yes}"
+  local no_label="${4:-No}"
   if ui_has_whiptail; then
     UI_CANCELLED=0
     UI_RESULT=""
-    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --yesno "$msg" 12 78
-    local rc=$?
+    local rc was_errexit=0
+    case "$-" in *e*) was_errexit=1 ;; esac
+    set +e
+    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --yes-button "$yes_label" --no-button "$no_label" --yesno "$msg" 20 90
+    rc=$?
+    if [[ "$was_errexit" -eq 1 ]]; then set -e; fi
     case "$rc" in
       0) return 0 ;;      # Yes
       1) return 1 ;;      # No
@@ -89,15 +100,18 @@ ui_input() {
   local title="${1:-Input}"
   local prompt="${2:-}"
   local default="${3:-}"
+  local ok_label="${4:-OK}"
+  local cancel_label="${5:-Cancel}"
 
   if ui_has_whiptail; then
     UI_CANCELLED=0
     UI_RESULT=""
-    local out rc
-    out="$(
-      ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --inputbox "$prompt" 12 78 "$default" 3>&1 1>&2 2>&3
-    )"
+    local out rc was_errexit=0
+    case "$-" in *e*) was_errexit=1 ;; esac
+    set +e
+    out="$(whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --ok-button "$ok_label" --cancel-button "$cancel_label" --inputbox "$prompt" 12 78 "$default" 3>&1 1>&2 2>&3)"
     rc=$?
+    if [[ "$was_errexit" -eq 1 ]]; then set -e; fi
     if [[ "$rc" -ne 0 ]]; then
       UI_CANCELLED=1
       UI_RESULT=""
@@ -126,14 +140,19 @@ ui_input() {
 ui_textbox() {
   local title="${1:-View}"
   local text="${2:-}"
+  local ok_label="${3:-OK}"
   if ui_has_whiptail; then
     UI_CANCELLED=0
     UI_RESULT=""
     local tmp
     tmp="$(mktemp)"
     printf "%s\n" "$text" >"$tmp"
-    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --textbox "$tmp" 24 90
-    local rc=$?
+    local rc was_errexit=0
+    case "$-" in *e*) was_errexit=1 ;; esac
+    set +e
+    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --ok-button "$ok_label" --textbox "$tmp" 24 90
+    rc=$?
+    if [[ "$was_errexit" -eq 1 ]]; then set -e; fi
     rm -f "$tmp"
     if [[ "$rc" -ne 0 ]]; then UI_CANCELLED=1; fi
     return 0
@@ -150,16 +169,19 @@ ui_textbox() {
 ui_menu() {
   local title="${1:-Menu}"
   local prompt="${2:-Select}"
-  shift 2
+  local ok_label="${3:-OK}"
+  local cancel_label="${4:-Cancel}"
+  shift 4
 
   if ui_has_whiptail; then
     UI_CANCELLED=0
     UI_RESULT=""
-    local out rc
-    out="$(
-      ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --menu "$prompt" 18 78 10 "$@" 3>&1 1>&2 2>&3
-    )"
+    local out rc was_errexit=0
+    case "$-" in *e*) was_errexit=1 ;; esac
+    set +e
+    out="$(whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --ok-button "$ok_label" --cancel-button "$cancel_label" --menu "$prompt" 18 78 10 "$@" 3>&1 1>&2 2>&3)"
     rc=$?
+    if [[ "$was_errexit" -eq 1 ]]; then set -e; fi
     if [[ "$rc" -ne 0 ]]; then
       UI_CANCELLED=1
       UI_RESULT=""
@@ -181,7 +203,7 @@ ui_menu() {
   for i in "${!keys[@]}"; do
     printf "%d) %s\n" "$((i + 1))" "${labels[$i]}" >&2
   done
-  printf "\nChoose [1-%d] (empty cancels): " "${#keys[@]}" >&2
+  printf "\nChoose [1-%d] (empty = %s): " "${#keys[@]}" "$cancel_label" >&2
 
   local choice
   UI_CANCELLED=0

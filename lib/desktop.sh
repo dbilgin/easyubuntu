@@ -143,7 +143,8 @@ desktop_choose_icon_from_container() {
 
   # Best-effort: show something while searching (non-blocking).
   if ui_has_whiptail; then
-    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "EasyUbuntu" --infobox "Searching for an icon in:\n\n$container_dir" 10 70
+    # Don't let an infobox failure trigger set -e exits.
+    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "EasyUbuntu" --infobox "Searching for an icon in:\n\n$container_dir" 10 70 || true
   fi
 
   desktop_find_best_icon_candidate "$container_dir"
@@ -153,20 +154,20 @@ desktop_choose_icon_from_container() {
     return 0
   fi
 
-  local preview
+  local preview msg
   preview="$(desktop_render_image_preview "$candidate")"
-  ui_textbox "Icon preview (OK = continue)" "$preview"
-  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
-    UI_RESULT=""
-    return 0
-  fi
+  msg="Suggested icon:\n$candidate\n\n$preview"
 
-  if ui_yesno "Use this icon?" "$candidate"; then
+  if ui_yesno "Icon" "$msg" "Use" "Skip"; then
     UI_RESULT="$candidate"
-    return 0
+  else
+    # No = Skip, Esc = Back (UI_CANCELLED=1)
+    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+      UI_RESULT=""
+      return 0
+    fi
+    UI_RESULT=""
   fi
-  # No => just proceed without icon (keeps the flow snappy).
-  UI_RESULT=""
   return 0
 }
 
@@ -351,7 +352,7 @@ desktop_pick_entry() {
   fi
 
   local choice
-  ui_menu "Remove .desktop" "Select an entry to remove" "${args[@]}"
+  ui_menu "Remove .desktop" "Select an entry to remove" "Select" "Back" "${args[@]}"
   if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
     UI_RESULT=""
     return 0

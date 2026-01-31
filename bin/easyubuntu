@@ -39,25 +39,19 @@ source "$LIB_ROOT/lib/desktop.sh"
 
 export EASYUBUNTU_VERSION
 
-exit_if_cancelled() {
-  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
-    exit 0
-  fi
-}
-
 main_menu() {
   while true; do
     local choice
-    ui_menu "EasyUbuntu $EASYUBUNTU_VERSION" "What would you like to do?" \
+    ui_menu "EasyUbuntu $EASYUBUNTU_VERSION" "What would you like to do?" "Select" "Exit" \
       "desktop" "Manage .desktop entries" \
       "exit" "Exit"
-    exit_if_cancelled
+    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then exit 0; fi
     choice="${UI_RESULT:-}"
 
     case "$choice" in
       desktop) desktop_menu ;;
       exit) exit 0 ;;
-      "") exit 0 ;;
+      "") continue ;;
       *) ui_error "Unknown choice: $choice" ;;
     esac
   done
@@ -66,13 +60,13 @@ main_menu() {
 desktop_menu() {
   while true; do
     local choice
-    ui_menu "Manage .desktop entries" "User applications: $(desktop_user_dir)" \
+    ui_menu "Manage .desktop entries" "User applications: $(desktop_user_dir)" "Select" "Back" \
       "list" "List entries" \
       "create" "Create new entry" \
       "import" "Import existing .desktop file" \
       "remove" "Remove entry" \
       "back" "Back"
-    exit_if_cancelled
+    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
     choice="${UI_RESULT:-}"
 
     case "$choice" in
@@ -81,7 +75,7 @@ desktop_menu() {
       import) desktop_ui_import ;;
       remove) desktop_ui_remove ;;
       back) return 0 ;;
-      "") exit 0 ;;
+      "") continue ;;
       *) ui_error "Unknown choice: $choice" ;;
     esac
   done
@@ -90,94 +84,139 @@ desktop_menu() {
 desktop_ui_list() {
   local content
   content="$(desktop_list_pretty)"
-  ui_textbox "Installed .desktop entries" "$content"
-  exit_if_cancelled
+  ui_textbox "Installed .desktop entries" "$content" "Back"
+  # Esc behaves like Back
 }
 
 desktop_ui_create() {
-  local container_dir name prefix rel_path full_path exec icon comment categories terminal filename
+  local step=0
 
-  ui_input "Create .desktop" "Container folder directory path" ""
-  exit_if_cancelled
-  container_dir="${UI_RESULT:-}"
-  container_dir="$(trim "$container_dir")"
-  if [[ -z "$container_dir" ]]; then ui_error "Container folder cannot be empty."; return 0; fi
-  if [[ ! -d "$container_dir" ]]; then ui_error "Not a directory: $container_dir"; return 0; fi
+  local container_dir="" name="" prefix="" rel_path="" full_path="" exec=""
+  local icon="" comment="" categories="Utility;" terminal="false" filename=""
 
-  ui_input "Create .desktop" "Name" "$(basename -- "$container_dir")"
-  exit_if_cancelled
-  name="${UI_RESULT:-}"
-  name="$(trim "$name")"
-  if [[ -z "$name" ]]; then ui_error "Name cannot be empty."; return 0; fi
+  while true; do
+    case "$step" in
+      0)
+        ui_input "Create .desktop" "Container folder directory path" "$container_dir" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
+        container_dir="$(trim "${UI_RESULT:-}")"
+        if [[ -z "$container_dir" ]]; then ui_error "Container folder cannot be empty."; continue; fi
+        if [[ ! -d "$container_dir" ]]; then ui_error "Not a directory: $container_dir"; continue; fi
+        step=1
+        ;;
 
-  ui_input "Create .desktop" "Prefix to run (optional, e.g. npx)" ""
-  exit_if_cancelled
-  prefix="${UI_RESULT:-}"
-  prefix="$(trim "$prefix")"
+      1)
+        ui_input "Create .desktop" "Name" "${name:-$(basename -- "$container_dir")}" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=0; continue; fi
+        name="$(trim "${UI_RESULT:-}")"
+        if [[ -z "$name" ]]; then ui_error "Name cannot be empty."; continue; fi
+        step=2
+        ;;
 
-  ui_input "Create .desktop" "Relative path to run (inside container folder)" ""
-  exit_if_cancelled
-  rel_path="${UI_RESULT:-}"
-  rel_path="$(trim "$rel_path")"
-  if [[ -z "$rel_path" ]]; then ui_error "Relative path cannot be empty."; return 0; fi
-  if [[ "$rel_path" == /* ]]; then ui_error "Relative path must not start with /"; return 0; fi
-  rel_path="${rel_path#./}"
+      2)
+        ui_input "Create .desktop" "Prefix to run (optional, e.g. npx)" "$prefix" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=1; continue; fi
+        prefix="$(trim "${UI_RESULT:-}")"
+        step=3
+        ;;
 
-  full_path="$container_dir/$rel_path"
-  while [[ "$full_path" == *"//"* ]]; do full_path="${full_path//\/\///}"; done
+      3)
+        ui_input "Create .desktop" "Relative path to run (inside container folder)" "$rel_path" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=2; continue; fi
+        rel_path="$(trim "${UI_RESULT:-}")"
+        if [[ -z "$rel_path" ]]; then ui_error "Relative path cannot be empty."; continue; fi
+        if [[ "$rel_path" == /* ]]; then ui_error "Relative path must not start with /"; continue; fi
+        rel_path="${rel_path#./}"
 
-  if [[ -n "$prefix" ]]; then
-    exec="$prefix $full_path"
-  else
-    exec="$full_path"
-  fi
+        full_path="$container_dir/$rel_path"
+        while [[ "$full_path" == *"//"* ]]; do full_path="${full_path//\/\///}"; done
 
-  if [[ -e "$full_path" ]]; then
-    : # ok
-  else
-    if ! ui_yesno "Create .desktop" "Target path does not exist:\n\n$full_path\n\nContinue anyway?"; then
-      exit_if_cancelled
-      return 0
-    fi
-  fi
+        if [[ -n "$prefix" ]]; then
+          exec="$prefix $full_path"
+        else
+          exec="$full_path"
+        fi
 
-  desktop_choose_icon_from_container "$container_dir"
-  exit_if_cancelled
-  icon="${UI_RESULT:-}"
-  ui_input "Create .desktop" "Comment (optional)" ""
-  exit_if_cancelled
-  comment="${UI_RESULT:-}"
-  ui_input "Create .desktop" "Categories (optional, e.g. Utility;System;)" "Utility;"
-  exit_if_cancelled
-  categories="${UI_RESULT:-}"
+        if [[ ! -e "$full_path" ]]; then
+          if ! ui_yesno "Create .desktop" "Target path does not exist:\n\n$full_path\n\nContinue anyway?" "Continue" "Back"; then
+            # No/Back or Esc => edit relative path again
+            step=3
+            continue
+          fi
+        fi
 
-  ui_menu "Create .desktop" "Run in terminal?" \
-    "false" "No" \
-    "true" "Yes"
-  exit_if_cancelled
-  terminal="${UI_RESULT:-}"
+        step=4
+        ;;
 
-  filename="$(desktop_suggest_filename "$name")"
-  ui_input "Create .desktop" "Filename (will be placed in $(desktop_user_dir))" "$filename"
-  exit_if_cancelled
-  filename="${UI_RESULT:-}"
-  filename="$(trim "$filename")"
+      4)
+        desktop_choose_icon_from_container "$container_dir"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=3; continue; fi
+        icon="${UI_RESULT:-}"
+        step=5
+        ;;
 
-  if [[ -z "$filename" ]]; then ui_error "Filename cannot be empty."; return 0; fi
-  if [[ "$filename" != *.desktop ]]; then filename="$filename.desktop"; fi
+      5)
+        ui_input "Create .desktop" "Comment (optional)" "$comment" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=4; continue; fi
+        comment="${UI_RESULT:-}"
+        step=6
+        ;;
 
-  if desktop_create_entry "$filename" "$name" "$exec" "$icon" "$comment" "$categories" "$terminal"; then
-    ui_msg "Created" "Created: $(desktop_user_dir)/$filename"
-  else
-    ui_error "Failed to create entry."
-  fi
+      6)
+        ui_input "Create .desktop" "Categories (optional, e.g. Utility;System;)" "$categories" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=5; continue; fi
+        categories="${UI_RESULT:-}"
+        step=7
+        ;;
+
+      7)
+        ui_menu "Create .desktop" "Run in terminal?" "Next" "Back" \
+          "false" "No" \
+          "true" "Yes"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=6; continue; fi
+        terminal="${UI_RESULT:-false}"
+        step=8
+        ;;
+
+      8)
+        if [[ -z "$filename" ]]; then
+          filename="$(desktop_suggest_filename "$name")"
+        fi
+        ui_input "Create .desktop" "Filename (will be placed in $(desktop_user_dir))" "$filename" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=7; continue; fi
+        filename="$(trim "${UI_RESULT:-}")"
+        if [[ -z "$filename" ]]; then ui_error "Filename cannot be empty."; continue; fi
+        if [[ "$filename" != *.desktop ]]; then filename="$filename.desktop"; fi
+        step=9
+        ;;
+
+      9)
+        local summary
+        summary="Name: $name\nExec: $exec\nIcon: ${icon:-<none>}\nTerminal: $terminal\nCategories: ${categories:-<none>}\nFile: $(desktop_user_dir)/$filename\n"
+        if ui_yesno "Create .desktop" "Create this entry?\n\n$summary" "Save" "Back"; then
+          if desktop_create_entry "$filename" "$name" "$exec" "$icon" "$comment" "$categories" "$terminal"; then
+            ui_msg "Created" "Created: $(desktop_user_dir)/$filename"
+            return 0
+          fi
+          ui_error "Failed to create entry."
+          step=8
+        else
+          step=8
+        fi
+        ;;
+
+      *)
+        return 0
+        ;;
+    esac
+  done
 }
 
 desktop_ui_import() {
   local src filename
-  ui_input "Import .desktop" "Path to an existing .desktop file" ""
-  exit_if_cancelled
-  src="${UI_RESULT:-}"
+  ui_input "Import .desktop" "Path to an existing .desktop file" "" "Next" "Back"
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
+  src="$(trim "${UI_RESULT:-}")"
   src="$(trim "$src")"
 
   if [[ -z "$src" ]]; then ui_error "Path cannot be empty."; return 0; fi
@@ -185,10 +224,9 @@ desktop_ui_import() {
   if ! desktop_is_desktop_file "$src"; then ui_error "File does not look like a .desktop entry."; return 0; fi
 
   filename="$(basename -- "$src")"
-  ui_input "Import .desktop" "Destination filename" "$filename"
-  exit_if_cancelled
-  filename="${UI_RESULT:-}"
-  filename="$(trim "$filename")"
+  ui_input "Import .desktop" "Destination filename" "$filename" "Import" "Back"
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
+  filename="$(trim "${UI_RESULT:-}")"
   if [[ -z "$filename" ]]; then ui_error "Filename cannot be empty."; return 0; fi
   if [[ "$filename" != *.desktop ]]; then filename="$filename.desktop"; fi
 
@@ -201,20 +239,26 @@ desktop_ui_import() {
 
 desktop_ui_remove() {
   local file
-  desktop_pick_entry
-  exit_if_cancelled
-  file="${UI_RESULT:-}"
-  if [[ -z "$file" ]]; then exit 0; fi
 
-  if ! ui_yesno "Remove .desktop" "Remove $(basename -- "$file")?\n\nThis cannot be undone."; then
-    exit_if_cancelled
+  desktop_pick_entry
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+    return 0
+  fi
+  file="${UI_RESULT:-}"
+  file="$(trim "$file")"
+  if [[ -z "$file" ]]; then
     return 0
   fi
 
-  if desktop_remove_entry "$file"; then
-    ui_msg "Removed" "Removed: $file"
+  if ui_yesno "Remove .desktop" "Delete $(basename -- "$file")?\n\nThis cannot be undone." "Delete" "Back"; then
+    if desktop_remove_entry "$file"; then
+      ui_msg "Removed" "Removed: $file"
+    else
+      ui_error "Failed to remove entry."
+    fi
   else
-    ui_error "Failed to remove entry."
+    # No/Back or Esc => back to Manage menu.
+    return 0
   fi
 }
 
