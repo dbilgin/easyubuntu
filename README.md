@@ -1,31 +1,20 @@
 # EasyUbuntu
 
-`easyubuntu` is a small CLI for Ubuntu that helps you **create/import/list/remove** user `.desktop` launcher entries.
+EasyUbuntu is a small Ubuntu-focused CLI with a terminal UI (TUI) that currently supports:
+
+- **Managing `.desktop` launchers**: list/create/import/remove user launchers
+- **Managing AppArmor profiles**: create/remove EasyUbuntu-managed profiles (requires sudo)
 
 ## Install
-
-### Install from GitHub (curl)
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/dbilgin/easyubuntu/master/install.sh" | bash
 ```
 
-To install from a different branch/tag/commit, set `EASYUBUNTU_REF`:
+### Install from different branch/tag/commit:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/dbilgin/easyubuntu/master/install.sh" | EASYUBUNTU_REF="master" bash
-```
-
-To install from a fork, set `EASYUBUNTU_REPO`:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/dbilgin/easyubuntu/master/install.sh" | EASYUBUNTU_REPO="owner/repo" bash
-```
-
-### Install from a local clone
-
-```bash
-./install.sh
 ```
 
 ## Run
@@ -39,17 +28,18 @@ If your shell can’t find it, ensure `~/.local/bin` is on your `PATH` (the inst
 ## Uninstall
 
 ```bash
-./uninstall.sh
-```
-
-Or if you no longer have the repo:
-
-```bash
 curl -fsSL "https://raw.githubusercontent.com/dbilgin/easyubuntu/master/uninstall.sh" | bash
 ```
 
-## What it manages
+## Dependencies
 
-- Installs `easyubuntu` to `~/.local/bin/easyubuntu`
-- Stores app data under `~/.local/share/easyubuntu/`
-- Manages user launcher entries under `~/.local/share/applications/`
+- **UI**: `whiptail` (recommended). If missing, EasyUbuntu uses a basic text fallback.
+- **Icon preview**: `chafa` (optional; enables real terminal preview during icon selection).
+- **AppArmor**: requires `apparmor_parser` and `systemctl`, and writing profiles requires **sudo**.
+
+## What it installs / touches
+
+- **Binary**: `~/.local/bin/easyubuntu`
+- **Libraries/data**: `~/.local/share/easyubuntu/`
+- **User `.desktop` entries**: `~/.local/share/applications/`
+- **AppArmor profiles (when used)**: `/etc/apparmor.d/` (EasyUbuntu-managed profiles are marked in-file)

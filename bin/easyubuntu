@@ -36,6 +36,8 @@ fi
 source "$LIB_ROOT/lib/ui.sh"
 # shellcheck source=/dev/null
 source "$LIB_ROOT/lib/desktop.sh"
+# shellcheck source=/dev/null
+source "$LIB_ROOT/lib/apparmor.sh"
 
 export EASYUBUNTU_VERSION
 
@@ -44,17 +46,155 @@ main_menu() {
     local choice
     ui_menu "EasyUbuntu $EASYUBUNTU_VERSION" "What would you like to do?" "Select" "Exit" \
       "desktop" "Manage .desktop entries" \
+      "apparmor" "Manage AppArmor profiles" \
       "exit" "Exit"
     if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then exit 0; fi
     choice="${UI_RESULT:-}"
 
     case "$choice" in
       desktop) desktop_menu ;;
+      apparmor) apparmor_menu ;;
       exit) exit 0 ;;
       "") continue ;;
       *) ui_error "Unknown choice: $choice" ;;
     esac
   done
+}
+
+apparmor_menu() {
+  while true; do
+    local choice
+    ui_menu "Manage AppArmor profiles" "Profiles in $(apparmor_profiles_dir)" "Select" "Back" \
+      "create" "Create profile" \
+      "remove" "Remove profile" \
+      "back" "Back"
+    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
+    choice="${UI_RESULT:-}"
+
+    case "$choice" in
+      create) apparmor_ui_create ;;
+      remove) apparmor_ui_remove ;;
+      back) return 0 ;;
+      "") continue ;;
+      *) ui_error "Unknown choice: $choice" ;;
+    esac
+  done
+}
+
+apparmor_ui_create() {
+  # Flow:
+  # 1) pick desktop
+  # 2) profile name (slugified Name)
+  # 3) exec path (prefilled from Exec)
+  # 4) permissions lines (editable list)
+  # 5) review, then sudo write + load + reload
+  desktop_pick_entry
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
+  local desktop_path
+  desktop_path="${UI_RESULT:-}"
+  desktop_path="$(trim "$desktop_path")"
+  [[ -n "$desktop_path" ]] || return 0
+
+  local app_name exec_line default_exec_path
+  app_name="$(desktop_entry_name "$desktop_path")"
+  exec_line="$(desktop_entry_exec "$desktop_path")"
+  default_exec_path="$(desktop_extract_first_absolute_path_from_exec "$exec_line")"
+
+  local step=0
+  local profile_name="" exec_path="" perms_lines=""
+
+  profile_name="$(apparmor_slugify_name "$app_name")"
+  exec_path="$default_exec_path"
+  perms_lines="$(apparmor_permissions_default)"
+
+  while true; do
+    case "$step" in
+      0)
+        ui_input "AppArmor" "Profile filename (under /etc/apparmor.d/)" "$profile_name" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
+        profile_name="$(apparmor_slugify_name "$(trim "${UI_RESULT:-}")")"
+        if [[ -z "$profile_name" ]]; then ui_error "Profile name cannot be empty."; continue; fi
+        step=1
+        ;;
+
+      1)
+        ui_input "AppArmor" "Executable full path (from Exec; editable)" "$exec_path" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=0; continue; fi
+        exec_path="$(trim "${UI_RESULT:-}")"
+        if [[ -z "$exec_path" ]]; then
+          ui_error "Executable path cannot be empty."
+          continue
+        fi
+        step=2
+        ;;
+
+      2)
+        # Permissions editor: show current, add/remove/done.
+        ui_textbox "AppArmor permissions" "Current permissions lines:\n\n$perms_lines" "Continue"
+        ui_menu "AppArmor permissions" "Edit permissions block" "Select" "Back" \
+          "add" "Add a permission line" \
+          "remove_last" "Remove last line" \
+          "done" "Done"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=1; continue; fi
+        case "${UI_RESULT:-}" in
+          add)
+            ui_input "AppArmor permissions" "Enter a line (e.g. userns,)" "" "Add" "Back"
+            if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then continue; fi
+            local line
+            line="$(trim "${UI_RESULT:-}")"
+            if [[ -n "$line" ]]; then
+              perms_lines+="$line"$'\n'
+            fi
+            ;;
+          remove_last)
+            # Remove last non-empty line.
+            perms_lines="$(printf "%s" "$perms_lines" | sed '$d')"$'\n'
+            ;;
+          done)
+            step=3
+            ;;
+          *)
+            ;;
+        esac
+        ;;
+
+      3)
+        local perms_block profile_text target_path
+        perms_block="$(apparmor_permissions_join "$perms_lines")"
+        profile_text="$(apparmor_generate_profile_text "$exec_path" "$perms_block" "$desktop_path" "$exec_line")"
+        target_path="$(apparmor_profile_path "$profile_name")"
+
+        ui_textbox "Review AppArmor profile" "Target:\n$target_path\n\n$profile_text" "Back"
+        ui_yesno "Save AppArmor profile" "Write and load this profile?\n\n$target_path" "Save" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=2; continue; fi
+        if ! apparmor_write_profile "$profile_name" "$profile_text"; then
+          step=2
+          continue
+        fi
+        if ! apparmor_load_and_reload "$profile_name"; then
+          return 0
+        fi
+        return 0
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  done
+}
+
+apparmor_ui_remove() {
+  apparmor_pick_managed_profile
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then return 0; fi
+  local profile_path
+  profile_path="${UI_RESULT:-}"
+  profile_path="$(trim "$profile_path")"
+  [[ -n "$profile_path" ]] || return 0
+
+  if ui_yesno "Remove AppArmor profile" "Delete:\n\n$profile_path\n\nThen reload AppArmor." "Delete" "Back"; then
+    apparmor_remove_profile "$profile_path"
+  fi
+  return 0
 }
 
 desktop_menu() {

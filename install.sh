@@ -118,6 +118,7 @@ main() {
   install -m 0755 "$src_root/bin/easyubuntu" "$bin_dir/easyubuntu"
   install -m 0644 "$src_root/lib/ui.sh" "$data_dir/lib/ui.sh"
   install -m 0644 "$src_root/lib/desktop.sh" "$data_dir/lib/desktop.sh"
+  install -m 0644 "$src_root/lib/apparmor.sh" "$data_dir/lib/apparmor.sh"
   printf "%s\n" "$EASYUBUNTU_VERSION" >"$data_dir/VERSION"
 
   if [[ -n "$tmp" ]]; then

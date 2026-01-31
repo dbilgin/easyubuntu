@@ -321,6 +321,64 @@ desktop_entry_name() {
   printf "%s\n" "$name"
 }
 
+desktop_entry_exec() {
+  local path="$1"
+  local exec
+  exec="$(grep -m1 '^Exec=' "$path" | sed 's/^Exec=//')"
+  printf "%s\n" "${exec:-}"
+}
+
+desktop_extract_first_absolute_path_from_exec() {
+  # Best-effort parsing: find first token starting with / and strip placeholders.
+  local exec_line="$1"
+  exec_line="${exec_line//%U/}"
+  exec_line="${exec_line//%u/}"
+  exec_line="${exec_line//%F/}"
+  exec_line="${exec_line//%f/}"
+  exec_line="${exec_line//%i/}"
+  exec_line="${exec_line//%c/}"
+  exec_line="${exec_line//%k/}"
+
+  # Very small tokenizer: handles simple quoting.
+  local s="$exec_line"
+  local token=""
+  local in_sq=0 in_dq=0
+  local ch
+  local i
+  for ((i=0; i<${#s}; i++)); do
+    ch="${s:i:1}"
+    if [[ "$ch" == "'" && "$in_dq" -eq 0 ]]; then
+      in_sq=$((1 - in_sq))
+      continue
+    fi
+    if [[ "$ch" == "\"" && "$in_sq" -eq 0 ]]; then
+      in_dq=$((1 - in_dq))
+      continue
+    fi
+
+    if [[ "$in_sq" -eq 0 && "$in_dq" -eq 0 && "$ch" =~ [[:space:]] ]]; then
+      token="$(trim "$token")"
+      if [[ -n "$token" && "$token" == /* ]]; then
+        printf "%s\n" "$token"
+        return 0
+      fi
+      token=""
+      continue
+    fi
+
+    token+="$ch"
+  done
+
+  token="$(trim "$token")"
+  if [[ -n "$token" && "$token" == /* ]]; then
+    printf "%s\n" "$token"
+    return 0
+  fi
+
+  printf "%s\n" ""
+  return 0
+}
+
 desktop_list_pretty() {
   local out=""
   local any=0
