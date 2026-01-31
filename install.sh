@@ -77,7 +77,7 @@ download_repo_tarball() {
 main() {
   os_sanity_check
 
-  local repo="${EASYUBUNTU_REPO:-$DEFAULT_REPO}"
+  local repo="$DEFAULT_REPO"
   local ref="${EASYUBUNTU_REF:-$DEFAULT_REF}"
 
   local bin_dir data_dir
