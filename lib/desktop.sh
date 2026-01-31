@@ -55,23 +55,36 @@ desktop_render_image_preview() {
     return 0
   fi
 
+  desktop__sanitize_preview() {
+    # Strip ANSI/control sequences so output is whiptail-safe.
+    # Remove CSI escapes + control chars; keep UTF-8 glyphs.
+    sed -E $'s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g' | tr -d '\000-\010\013\014\016-\037\177'
+  }
+
   if command -v chafa >/dev/null 2>&1; then
-    # Best-effort: render as plain ASCII (whiptail-friendly).
+    # Best-effort: render as monochrome unicode blocks (whiptail-safe after sanitize).
+    local preview=""
     if command -v timeout >/dev/null 2>&1; then
-      if timeout 2s chafa --colors none --symbols ascii -s 60x20 "$path" 2>/dev/null; then
-        return 0
-      fi
-    elif chafa --colors none --symbols ascii -s 60x20 "$path" 2>/dev/null; then
+      preview="$(timeout 2s chafa -f symbols -c none --symbols block+border+solid --optimize 0 --polite on --relative off -s 60x20 "$path" 2>/dev/null | desktop__sanitize_preview || true)"
+    else
+      preview="$(chafa -f symbols -c none --symbols block+border+solid --optimize 0 --polite on --relative off -s 60x20 "$path" 2>/dev/null | desktop__sanitize_preview || true)"
+    fi
+    if [[ -n "$preview" ]]; then
+      printf "%s\n" "$preview"
       return 0
     fi
   fi
 
   if command -v viu >/dev/null 2>&1; then
+    # Viu usually outputs ANSI; sanitize for whiptail.
+    local preview=""
     if command -v timeout >/dev/null 2>&1; then
-      if timeout 2s viu -w 60 "$path" 2>/dev/null; then
-        return 0
-      fi
-    elif viu -w 60 "$path" 2>/dev/null; then
+      preview="$(timeout 2s viu -w 60 "$path" 2>/dev/null | desktop__sanitize_preview || true)"
+    else
+      preview="$(viu -w 60 "$path" 2>/dev/null | desktop__sanitize_preview || true)"
+    fi
+    if [[ -n "$preview" ]]; then
+      printf "%s\n" "$preview"
       return 0
     fi
   fi
@@ -79,12 +92,58 @@ desktop_render_image_preview() {
   if command -v file >/dev/null 2>&1; then
     printf "%s\n" "$path"
     file -b -- "$path" 2>/dev/null || true
-    printf "\nTip: install chafa to preview images in-terminal:\n"
+    printf "\nTip: install chafa for a safe preview inside whiptail:\n"
     printf "  sudo apt-get update && sudo apt-get install -y chafa\n"
   else
     printf "%s\n" "$path"
     printf "(no terminal image preview tool found)\n"
   fi
+}
+
+desktop__tty_preview_and_confirm_icon() {
+  # Show a high-fidelity preview in the terminal (not inside whiptail),
+  # then ask for a single-key confirmation.
+  #
+  # Returns:
+  #  0 => use
+  #  1 => skip (no icon)
+  #  2 => back
+  local icon_path="$1"
+  local tty="/dev/tty"
+
+  [[ -r "$tty" && -w "$tty" ]] || return 1
+
+  # Clear a bit of space; avoid full clear to reduce flicker.
+  printf "\nSuggested icon:\n%s\n\n" "$icon_path" >"$tty"
+
+  if command -v chafa >/dev/null 2>&1; then
+    # Use chafa's default color selection for best fidelity in the user's terminal.
+    # Avoid cursor-relative output so it doesn't behave strangely.
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 2s chafa -f symbols --polite on --relative off --optimize 0 -s 60x20 "$icon_path" >"$tty" 2>/dev/null || true
+    else
+      chafa -f symbols --polite on --relative off --optimize 0 -s 60x20 "$icon_path" >"$tty" 2>/dev/null || true
+    fi
+  else
+    # Fallback: just show file info.
+    if command -v file >/dev/null 2>&1; then
+      file -b -- "$icon_path" >"$tty" 2>/dev/null || true
+    fi
+  fi
+
+  printf "\n[u] Use   [s] Skip   [b] Back: " >"$tty"
+  local key=""
+  IFS= read -r -n1 key <"$tty" || return 2
+  printf "\n" >"$tty"
+
+  key="${key,,}"
+  case "$key" in
+    u|y) return 0 ;;
+    $'\e') return 2 ;; # Esc
+    b) return 2 ;;
+    s|n|"") return 1 ;;
+    *) return 1 ;;
+  esac
 }
 
 desktop__find_first() {
@@ -154,11 +213,30 @@ desktop_choose_icon_from_container() {
     return 0
   fi
 
-  local preview msg
-  preview="$(desktop_render_image_preview "$candidate")"
-  msg="Suggested icon:\n$candidate\n\n$preview"
+  # If possible, show a real preview directly in the terminal (not whiptail),
+  # because whiptail cannot render ANSI graphics reliably.
+  if [[ -r /dev/tty && -w /dev/tty ]]; then
+    local rc
+    # IMPORTANT: This function intentionally returns non-zero for Skip/Back.
+    # With `set -e` enabled, calling it as a bare command would exit the app.
+    if desktop__tty_preview_and_confirm_icon "$candidate"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    case "$rc" in
+      0)
+        UI_RESULT="$candidate"
+        return 0
+        ;;
+      1) UI_RESULT=""; return 0 ;;          # skip
+      2) UI_CANCELLED=1; UI_RESULT=""; return 0 ;; # back
+      *) UI_RESULT=""; return 0 ;;
+    esac
+  fi
 
-  if ui_yesno "Icon" "$msg" "Use" "Skip"; then
+  # Fallback: show a simple prompt in whiptail.
+  if ui_yesno "Icon" "Suggested icon:\n$candidate\n\nUse it?" "Use" "Skip"; then
     UI_RESULT="$candidate"
   else
     # No = Skip, Esc = Back (UI_CANCELLED=1)
