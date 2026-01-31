@@ -84,17 +84,44 @@ desktop_ui_list() {
 }
 
 desktop_ui_create() {
-  local name exec icon comment categories terminal filename
+  local container_dir name prefix rel_path full_path exec icon comment categories terminal filename
 
-  name="$(ui_input "Create .desktop" "Name" "")" || return 0
+  container_dir="$(ui_input "Create .desktop" "Container folder directory path" "")" || return 0
+  container_dir="$(trim "$container_dir")"
+  if [[ -z "$container_dir" ]]; then ui_error "Container folder cannot be empty."; return 0; fi
+  if [[ ! -d "$container_dir" ]]; then ui_error "Not a directory: $container_dir"; return 0; fi
+
+  name="$(ui_input "Create .desktop" "Name" "$(basename -- "$container_dir")")" || return 0
   name="$(trim "$name")"
   if [[ -z "$name" ]]; then ui_error "Name cannot be empty."; return 0; fi
 
-  exec="$(ui_input "Create .desktop" "Exec (command to run)" "")" || return 0
-  exec="$(trim "$exec")"
-  if [[ -z "$exec" ]]; then ui_error "Exec cannot be empty."; return 0; fi
+  prefix="$(ui_input "Create .desktop" "Prefix to run (optional, e.g. npx)" "")" || return 0
+  prefix="$(trim "$prefix")"
 
-  icon="$(ui_input "Create .desktop" "Icon (optional: name or path)" "")" || return 0
+  rel_path="$(ui_input "Create .desktop" "Relative path to run (inside container folder)" "")" || return 0
+  rel_path="$(trim "$rel_path")"
+  if [[ -z "$rel_path" ]]; then ui_error "Relative path cannot be empty."; return 0; fi
+  if [[ "$rel_path" == /* ]]; then ui_error "Relative path must not start with /"; return 0; fi
+  rel_path="${rel_path#./}"
+
+  full_path="$container_dir/$rel_path"
+  while [[ "$full_path" == *"//"* ]]; do full_path="${full_path//\/\///}"; done
+
+  if [[ -n "$prefix" ]]; then
+    exec="$prefix $full_path"
+  else
+    exec="$full_path"
+  fi
+
+  if [[ -e "$full_path" ]]; then
+    : # ok
+  else
+    if ! ui_yesno "Create .desktop" "Target path does not exist:\n\n$full_path\n\nContinue anyway?"; then
+      return 0
+    fi
+  fi
+
+  icon="$(desktop_choose_icon_from_container "$container_dir" || true)"
   comment="$(ui_input "Create .desktop" "Comment (optional)" "")" || return 0
   categories="$(ui_input "Create .desktop" "Categories (optional, e.g. Utility;System;)" "Utility;")" || return 0
 

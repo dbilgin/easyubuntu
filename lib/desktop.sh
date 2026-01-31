@@ -13,6 +13,95 @@ desktop_ensure_dirs() {
   mkdir -p "$(desktop_user_dir)"
 }
 
+desktop_find_image_candidates() {
+  local container_dir="$1"
+  [[ -d "$container_dir" ]] || return 0
+
+  local -a exact_icons=()
+  local -a contains_icons=()
+  local -a others=()
+
+  # Recursively enumerate common image formats.
+  local f base stem lower_base lower_stem
+  while IFS= read -r -d '' f; do
+    base="$(basename -- "$f")"
+    stem="${base%.*}"
+    lower_base="${base,,}"
+    lower_stem="${stem,,}"
+
+    if [[ "$lower_stem" == "icon" ]]; then
+      exact_icons+=("$f")
+    elif [[ "$lower_base" == *"icon"* ]]; then
+      contains_icons+=("$f")
+    else
+      others+=("$f")
+    fi
+  done < <(
+    find "$container_dir" -type f \
+      \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.svg" -o -iname "*.webp" -o -iname "*.gif" -o -iname "*.ico" \) \
+      -print0 2>/dev/null
+  )
+
+  local p
+  for p in "${exact_icons[@]}"; do printf "%s\n" "$p"; done
+  for p in "${contains_icons[@]}"; do printf "%s\n" "$p"; done
+  for p in "${others[@]}"; do printf "%s\n" "$p"; done
+}
+
+desktop_render_image_preview() {
+  local path="$1"
+  if [[ ! -f "$path" ]]; then
+    printf "File not found: %s\n" "$path"
+    return 0
+  fi
+
+  if command -v chafa >/dev/null 2>&1; then
+    # Best-effort: may include ANSI escapes depending on terminal.
+    if chafa -s 60x20 "$path" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  if command -v viu >/dev/null 2>&1; then
+    if viu -w 60 "$path" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  if command -v file >/dev/null 2>&1; then
+    printf "%s\n" "$path"
+    file -b -- "$path" 2>/dev/null || true
+  else
+    printf "%s\n" "$path"
+    printf "(no terminal image preview tool found)\n"
+  fi
+}
+
+desktop_choose_icon_from_container() {
+  local container_dir="$1"
+  [[ -d "$container_dir" ]] || { printf "%s\n" ""; return 0; }
+
+  local any=0
+  local candidate preview
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    any=1
+    preview="$(desktop_render_image_preview "$candidate")"
+    ui_textbox "Icon preview" "$preview"
+    if ui_yesno "Use this icon?" "$candidate"; then
+      printf "%s\n" "$candidate"
+      return 0
+    fi
+  done < <(desktop_find_image_candidates "$container_dir")
+
+  if [[ "$any" -eq 0 ]]; then
+    return 0
+  fi
+
+  # User rejected all.
+  printf "%s\n" ""
+}
+
 slugify() {
   local s="${1:-}"
   s="${s,,}"
