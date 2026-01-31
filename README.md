@@ -5,6 +5,9 @@ EasyUbuntu is a small Ubuntu-focused CLI with a terminal UI (TUI) that currently
 - **Managing `.desktop` launchers**: list/create/import/remove user launchers
 - **Managing AppArmor profiles**: create/remove EasyUbuntu-managed profiles (requires sudo)
 
+<img width="700" alt="image" src="https://github.com/user-attachments/assets/5bb55f59-71df-4872-b701-2574ada16449" />
+
+
 ## Install
 
 ```bash
