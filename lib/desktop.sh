@@ -88,8 +88,18 @@ desktop_choose_icon_from_container() {
     any=1
     preview="$(desktop_render_image_preview "$candidate")"
     ui_textbox "Icon preview" "$preview"
+    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+      # Esc pressed on preview: abort icon selection (continue create flow with no icon).
+      printf "%s\n" ""
+      return 0
+    fi
     if ui_yesno "Use this icon?" "$candidate"; then
       printf "%s\n" "$candidate"
+      return 0
+    fi
+    if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+      # Esc pressed on yes/no: abort icon selection (continue create flow with no icon).
+      printf "%s\n" ""
       return 0
     fi
   done < <(desktop_find_image_candidates "$container_dir")
@@ -181,7 +191,7 @@ desktop_list_pretty() {
   while IFS= read -r f; do
     any=1
     name="$(desktop_entry_name "$f")"
-    out+=$(printf "%s\t%s\n" "$(basename -- "$f")" "$name")
+    out+="$(basename -- "$f")"$'\t'"$name"$'\n'
   done < <(desktop_list_files)
 
   if [[ "$any" -eq 0 ]]; then
@@ -261,6 +271,9 @@ desktop_remove_entry() {
 }
 
 desktop_pick_entry() {
+  UI_CANCELLED=0
+  UI_RESULT=""
+
   local -a files=()
   local -a args=()
   local f name i
@@ -274,14 +287,21 @@ desktop_pick_entry() {
 
   if [[ "${#args[@]}" -eq 0 ]]; then
     ui_msg "Remove .desktop" "No entries found in $(desktop_user_dir)."
-    return 1
+    UI_CANCELLED=1
+    UI_RESULT=""
+    return 0
   fi
 
   local choice
-  choice="$(ui_menu "Remove .desktop" "Select an entry to remove" "${args[@]}")" || return 1
-  choice="$(trim "$choice")"
-  [[ "$choice" =~ ^[0-9]+$ ]] || return 1
-  (( choice >= 1 && choice <= ${#files[@]} )) || return 1
-  printf "%s\n" "${files[$((choice - 1))]}"
+  ui_menu "Remove .desktop" "Select an entry to remove" "${args[@]}"
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+    UI_RESULT=""
+    return 0
+  fi
+  choice="$(trim "${UI_RESULT:-}")"
+  [[ "$choice" =~ ^[0-9]+$ ]] || { UI_CANCELLED=1; UI_RESULT=""; return 0; }
+  (( choice >= 1 && choice <= ${#files[@]} )) || { UI_CANCELLED=1; UI_RESULT=""; return 0; }
+  UI_RESULT="${files[$((choice - 1))]}"
+  return 0
 }
 

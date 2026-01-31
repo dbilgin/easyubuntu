@@ -39,17 +39,25 @@ source "$LIB_ROOT/lib/desktop.sh"
 
 export EASYUBUNTU_VERSION
 
+exit_if_cancelled() {
+  if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+    exit 0
+  fi
+}
+
 main_menu() {
   while true; do
     local choice
-    choice="$(ui_menu "EasyUbuntu $EASYUBUNTU_VERSION" "What would you like to do?" \
+    ui_menu "EasyUbuntu $EASYUBUNTU_VERSION" "What would you like to do?" \
       "desktop" "Manage .desktop entries" \
-      "exit" "Exit" \
-    )" || return 0
+      "exit" "Exit"
+    exit_if_cancelled
+    choice="${UI_RESULT:-}"
 
     case "$choice" in
       desktop) desktop_menu ;;
-      exit) return 0 ;;
+      exit) exit 0 ;;
+      "") exit 0 ;;
       *) ui_error "Unknown choice: $choice" ;;
     esac
   done
@@ -58,13 +66,14 @@ main_menu() {
 desktop_menu() {
   while true; do
     local choice
-    choice="$(ui_menu "Manage .desktop entries" "User applications: $(desktop_user_dir)" \
+    ui_menu "Manage .desktop entries" "User applications: $(desktop_user_dir)" \
       "list" "List entries" \
       "create" "Create new entry" \
       "import" "Import existing .desktop file" \
       "remove" "Remove entry" \
-      "back" "Back" \
-    )" || return 0
+      "back" "Back"
+    exit_if_cancelled
+    choice="${UI_RESULT:-}"
 
     case "$choice" in
       list) desktop_ui_list ;;
@@ -72,6 +81,7 @@ desktop_menu() {
       import) desktop_ui_import ;;
       remove) desktop_ui_remove ;;
       back) return 0 ;;
+      "") exit 0 ;;
       *) ui_error "Unknown choice: $choice" ;;
     esac
   done
@@ -81,24 +91,33 @@ desktop_ui_list() {
   local content
   content="$(desktop_list_pretty)"
   ui_textbox "Installed .desktop entries" "$content"
+  exit_if_cancelled
 }
 
 desktop_ui_create() {
   local container_dir name prefix rel_path full_path exec icon comment categories terminal filename
 
-  container_dir="$(ui_input "Create .desktop" "Container folder directory path" "")" || return 0
+  ui_input "Create .desktop" "Container folder directory path" ""
+  exit_if_cancelled
+  container_dir="${UI_RESULT:-}"
   container_dir="$(trim "$container_dir")"
   if [[ -z "$container_dir" ]]; then ui_error "Container folder cannot be empty."; return 0; fi
   if [[ ! -d "$container_dir" ]]; then ui_error "Not a directory: $container_dir"; return 0; fi
 
-  name="$(ui_input "Create .desktop" "Name" "$(basename -- "$container_dir")")" || return 0
+  ui_input "Create .desktop" "Name" "$(basename -- "$container_dir")"
+  exit_if_cancelled
+  name="${UI_RESULT:-}"
   name="$(trim "$name")"
   if [[ -z "$name" ]]; then ui_error "Name cannot be empty."; return 0; fi
 
-  prefix="$(ui_input "Create .desktop" "Prefix to run (optional, e.g. npx)" "")" || return 0
+  ui_input "Create .desktop" "Prefix to run (optional, e.g. npx)" ""
+  exit_if_cancelled
+  prefix="${UI_RESULT:-}"
   prefix="$(trim "$prefix")"
 
-  rel_path="$(ui_input "Create .desktop" "Relative path to run (inside container folder)" "")" || return 0
+  ui_input "Create .desktop" "Relative path to run (inside container folder)" ""
+  exit_if_cancelled
+  rel_path="${UI_RESULT:-}"
   rel_path="$(trim "$rel_path")"
   if [[ -z "$rel_path" ]]; then ui_error "Relative path cannot be empty."; return 0; fi
   if [[ "$rel_path" == /* ]]; then ui_error "Relative path must not start with /"; return 0; fi
@@ -117,21 +136,30 @@ desktop_ui_create() {
     : # ok
   else
     if ! ui_yesno "Create .desktop" "Target path does not exist:\n\n$full_path\n\nContinue anyway?"; then
+      exit_if_cancelled
       return 0
     fi
   fi
 
   icon="$(desktop_choose_icon_from_container "$container_dir" || true)"
-  comment="$(ui_input "Create .desktop" "Comment (optional)" "")" || return 0
-  categories="$(ui_input "Create .desktop" "Categories (optional, e.g. Utility;System;)" "Utility;")" || return 0
+  exit_if_cancelled
+  ui_input "Create .desktop" "Comment (optional)" ""
+  exit_if_cancelled
+  comment="${UI_RESULT:-}"
+  ui_input "Create .desktop" "Categories (optional, e.g. Utility;System;)" "Utility;"
+  exit_if_cancelled
+  categories="${UI_RESULT:-}"
 
-  terminal="$(ui_menu "Create .desktop" "Run in terminal?" \
+  ui_menu "Create .desktop" "Run in terminal?" \
     "false" "No" \
-    "true" "Yes" \
-  )" || return 0
+    "true" "Yes"
+  exit_if_cancelled
+  terminal="${UI_RESULT:-}"
 
   filename="$(desktop_suggest_filename "$name")"
-  filename="$(ui_input "Create .desktop" "Filename (will be placed in $(desktop_user_dir))" "$filename")" || return 0
+  ui_input "Create .desktop" "Filename (will be placed in $(desktop_user_dir))" "$filename"
+  exit_if_cancelled
+  filename="${UI_RESULT:-}"
   filename="$(trim "$filename")"
 
   if [[ -z "$filename" ]]; then ui_error "Filename cannot be empty."; return 0; fi
@@ -146,7 +174,9 @@ desktop_ui_create() {
 
 desktop_ui_import() {
   local src filename
-  src="$(ui_input "Import .desktop" "Path to an existing .desktop file" "")" || return 0
+  ui_input "Import .desktop" "Path to an existing .desktop file" ""
+  exit_if_cancelled
+  src="${UI_RESULT:-}"
   src="$(trim "$src")"
 
   if [[ -z "$src" ]]; then ui_error "Path cannot be empty."; return 0; fi
@@ -154,7 +184,9 @@ desktop_ui_import() {
   if ! desktop_is_desktop_file "$src"; then ui_error "File does not look like a .desktop entry."; return 0; fi
 
   filename="$(basename -- "$src")"
-  filename="$(ui_input "Import .desktop" "Destination filename" "$filename")" || return 0
+  ui_input "Import .desktop" "Destination filename" "$filename"
+  exit_if_cancelled
+  filename="${UI_RESULT:-}"
   filename="$(trim "$filename")"
   if [[ -z "$filename" ]]; then ui_error "Filename cannot be empty."; return 0; fi
   if [[ "$filename" != *.desktop ]]; then filename="$filename.desktop"; fi
@@ -168,10 +200,13 @@ desktop_ui_import() {
 
 desktop_ui_remove() {
   local file
-  file="$(desktop_pick_entry)" || return 0
-  if [[ -z "$file" ]]; then return 0; fi
+  desktop_pick_entry
+  exit_if_cancelled
+  file="${UI_RESULT:-}"
+  if [[ -z "$file" ]]; then exit 0; fi
 
   if ! ui_yesno "Remove .desktop" "Remove $(basename -- "$file")?\n\nThis cannot be undone."; then
+    exit_if_cancelled
     return 0
   fi
 

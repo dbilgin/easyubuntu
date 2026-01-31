@@ -5,6 +5,26 @@ ui_has_whiptail() {
   command -v whiptail >/dev/null 2>&1
 }
 
+UI_CANCELLED=0
+UI_RESULT=""
+
+ui__with_errexit_disabled() {
+  # Runs a command with errexit disabled, preserving previous state.
+  # Usage: ui__with_errexit_disabled cmd arg...
+  local was_errexit=0
+  case "$-" in
+    *e*) was_errexit=1 ;;
+  esac
+
+  set +e
+  "$@"
+  local rc=$?
+  if [[ "$was_errexit" -eq 1 ]]; then
+    set -e
+  fi
+  return "$rc"
+}
+
 ui_backtitle() {
   if [[ -n "${EASYUBUNTU_VERSION:-}" ]]; then
     printf "EasyUbuntu v%s\n" "$EASYUBUNTU_VERSION"
@@ -26,7 +46,12 @@ ui_msg() {
   local title="${1:-Message}"
   local msg="${2:-}"
   if ui_has_whiptail; then
-    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --msgbox "$msg" 12 78
+    UI_CANCELLED=0
+    UI_RESULT=""
+    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --msgbox "$msg" 12 78
+    # msgbox has only OK; treat non-zero as cancelled but never propagate failure.
+    if [[ "$?" -ne 0 ]]; then UI_CANCELLED=1; fi
+    return 0
   else
     printf "\n== %s ==\n%s\n\n" "$title" "$msg"
   fi
@@ -40,13 +65,23 @@ ui_yesno() {
   local title="${1:-Confirm}"
   local msg="${2:-Are you sure?}"
   if ui_has_whiptail; then
-    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --yesno "$msg" 12 78
-    return $?
+    UI_CANCELLED=0
+    UI_RESULT=""
+    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --yesno "$msg" 12 78
+    local rc=$?
+    case "$rc" in
+      0) return 0 ;;      # Yes
+      1) return 1 ;;      # No
+      255) UI_CANCELLED=1; return 1 ;; # Esc
+      *) UI_CANCELLED=1; return 1 ;;
+    esac
   fi
 
   printf "%s [y/N]: " "$msg" >&2
   local yn
-  read -r yn || return 1
+  UI_CANCELLED=0
+  UI_RESULT=""
+  read -r yn || { UI_CANCELLED=1; return 1; }
   [[ "${yn,,}" == "y" || "${yn,,}" == "yes" ]]
 }
 
@@ -56,8 +91,20 @@ ui_input() {
   local default="${3:-}"
 
   if ui_has_whiptail; then
-    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --inputbox "$prompt" 12 78 "$default" 3>&1 1>&2 2>&3
-    return $?
+    UI_CANCELLED=0
+    UI_RESULT=""
+    local out rc
+    out="$(
+      ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --inputbox "$prompt" 12 78 "$default" 3>&1 1>&2 2>&3
+    )"
+    rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      UI_CANCELLED=1
+      UI_RESULT=""
+      return 0
+    fi
+    UI_RESULT="$out"
+    return 0
   fi
 
   printf "%s " "$prompt" >&2
@@ -66,11 +113,13 @@ ui_input() {
   fi
 
   local out
-  read -r out || return 1
+  UI_CANCELLED=0
+  UI_RESULT=""
+  read -r out || { UI_CANCELLED=1; return 0; }
   if [[ -z "$out" && -n "$default" ]]; then
-    printf "%s\n" "$default"
+    UI_RESULT="$default"
   else
-    printf "%s\n" "$out"
+    UI_RESULT="$out"
   fi
 }
 
@@ -78,16 +127,23 @@ ui_textbox() {
   local title="${1:-View}"
   local text="${2:-}"
   if ui_has_whiptail; then
+    UI_CANCELLED=0
+    UI_RESULT=""
     local tmp
     tmp="$(mktemp)"
     printf "%s\n" "$text" >"$tmp"
-    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --textbox "$tmp" 24 90
+    ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --textbox "$tmp" 24 90
+    local rc=$?
     rm -f "$tmp"
+    if [[ "$rc" -ne 0 ]]; then UI_CANCELLED=1; fi
+    return 0
   else
     printf "\n== %s ==\n%s\n\n" "$title" "$text"
     printf "Press Enter to continue..." >&2
     local _
-    read -r _ || true
+    UI_CANCELLED=0
+    UI_RESULT=""
+    read -r _ || { UI_CANCELLED=1; return 0; }
   fi
 }
 
@@ -97,8 +153,20 @@ ui_menu() {
   shift 2
 
   if ui_has_whiptail; then
-    whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --menu "$prompt" 18 78 10 "$@" 3>&1 1>&2 2>&3
-    return $?
+    UI_CANCELLED=0
+    UI_RESULT=""
+    local out rc
+    out="$(
+      ui__with_errexit_disabled whiptail --backtitle "$(ui_backtitle)" --title "$(ui_title "$title")" --menu "$prompt" 18 78 10 "$@" 3>&1 1>&2 2>&3
+    )"
+    rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      UI_CANCELLED=1
+      UI_RESULT=""
+      return 0
+    fi
+    UI_RESULT="$out"
+    return 0
   fi
 
   # Fallback: print numbered list
@@ -116,11 +184,13 @@ ui_menu() {
   printf "\nChoose [1-%d] (empty cancels): " "${#keys[@]}" >&2
 
   local choice
-  read -r choice || return 1
+  UI_CANCELLED=0
+  UI_RESULT=""
+  read -r choice || { UI_CANCELLED=1; return 0; }
   choice="$(trim "$choice")"
-  [[ -z "$choice" ]] && return 1
-  [[ "$choice" =~ ^[0-9]+$ ]] || return 1
-  (( choice >= 1 && choice <= ${#keys[@]} )) || return 1
-  printf "%s\n" "${keys[$((choice - 1))]}"
+  [[ -z "$choice" ]] && { UI_CANCELLED=1; return 0; }
+  [[ "$choice" =~ ^[0-9]+$ ]] || { UI_CANCELLED=1; return 0; }
+  (( choice >= 1 && choice <= ${#keys[@]} )) || { UI_CANCELLED=1; return 0; }
+  UI_RESULT="${keys[$((choice - 1))]}"
 }
 
