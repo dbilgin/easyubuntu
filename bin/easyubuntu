@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EASYUBUNTU_VERSION="0.1.0"
+
+err() { printf "easyubuntu: %s\n" "$*" >&2; }
+
+resolve_lib_root() {
+  # Dev mode: repo checkout
+  local self_dir
+  self_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$self_dir/../lib/ui.sh" && -f "$self_dir/../lib/desktop.sh" ]]; then
+    (cd -- "$self_dir/.." && pwd)
+    return 0
+  fi
+
+  # Installed mode
+  local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  local installed_root="$data_home/easyubuntu"
+  if [[ -f "$installed_root/lib/ui.sh" && -f "$installed_root/lib/desktop.sh" ]]; then
+    printf "%s\n" "$installed_root"
+    return 0
+  fi
+
+  return 1
+}
+
+LIB_ROOT="$(resolve_lib_root || true)"
+if [[ -z "${LIB_ROOT:-}" ]]; then
+  err "Could not locate installed libraries."
+  err "If you installed via ./install.sh, try re-running it."
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$LIB_ROOT/lib/ui.sh"
+# shellcheck source=/dev/null
+source "$LIB_ROOT/lib/desktop.sh"
+
+export EASYUBUNTU_VERSION
+
+main_menu() {
+  while true; do
+    local choice
+    choice="$(ui_menu "EasyUbuntu $EASYUBUNTU_VERSION" "What would you like to do?" \
+      "desktop" "Manage .desktop entries" \
+      "exit" "Exit" \
+    )" || return 0
+
+    case "$choice" in
+      desktop) desktop_menu ;;
+      exit) return 0 ;;
+      *) ui_error "Unknown choice: $choice" ;;
+    esac
+  done
+}
+
+desktop_menu() {
+  while true; do
+    local choice
+    choice="$(ui_menu "Manage .desktop entries" "User applications: $(desktop_user_dir)" \
+      "list" "List entries" \
+      "create" "Create new entry" \
+      "import" "Import existing .desktop file" \
+      "remove" "Remove entry" \
+      "back" "Back" \
+    )" || return 0
+
+    case "$choice" in
+      list) desktop_ui_list ;;
+      create) desktop_ui_create ;;
+      import) desktop_ui_import ;;
+      remove) desktop_ui_remove ;;
+      back) return 0 ;;
+      *) ui_error "Unknown choice: $choice" ;;
+    esac
+  done
+}
+
+desktop_ui_list() {
+  local content
+  content="$(desktop_list_pretty)"
+  ui_textbox "Installed .desktop entries" "$content"
+}
+
+desktop_ui_create() {
+  local name exec icon comment categories terminal filename
+
+  name="$(ui_input "Create .desktop" "Name" "")" || return 0
+  name="$(trim "$name")"
+  if [[ -z "$name" ]]; then ui_error "Name cannot be empty."; return 0; fi
+
+  exec="$(ui_input "Create .desktop" "Exec (command to run)" "")" || return 0
+  exec="$(trim "$exec")"
+  if [[ -z "$exec" ]]; then ui_error "Exec cannot be empty."; return 0; fi
+
+  icon="$(ui_input "Create .desktop" "Icon (optional: name or path)" "")" || return 0
+  comment="$(ui_input "Create .desktop" "Comment (optional)" "")" || return 0
+  categories="$(ui_input "Create .desktop" "Categories (optional, e.g. Utility;System;)" "Utility;")" || return 0
+
+  terminal="$(ui_menu "Create .desktop" "Run in terminal?" \
+    "false" "No" \
+    "true" "Yes" \
+  )" || return 0
+
+  filename="$(desktop_suggest_filename "$name")"
+  filename="$(ui_input "Create .desktop" "Filename (will be placed in $(desktop_user_dir))" "$filename")" || return 0
+  filename="$(trim "$filename")"
+
+  if [[ -z "$filename" ]]; then ui_error "Filename cannot be empty."; return 0; fi
+  if [[ "$filename" != *.desktop ]]; then filename="$filename.desktop"; fi
+
+  if desktop_create_entry "$filename" "$name" "$exec" "$icon" "$comment" "$categories" "$terminal"; then
+    ui_msg "Created" "Created: $(desktop_user_dir)/$filename"
+  else
+    ui_error "Failed to create entry."
+  fi
+}
+
+desktop_ui_import() {
+  local src filename
+  src="$(ui_input "Import .desktop" "Path to an existing .desktop file" "")" || return 0
+  src="$(trim "$src")"
+
+  if [[ -z "$src" ]]; then ui_error "Path cannot be empty."; return 0; fi
+  if [[ ! -f "$src" ]]; then ui_error "File not found: $src"; return 0; fi
+  if ! desktop_is_desktop_file "$src"; then ui_error "File does not look like a .desktop entry."; return 0; fi
+
+  filename="$(basename -- "$src")"
+  filename="$(ui_input "Import .desktop" "Destination filename" "$filename")" || return 0
+  filename="$(trim "$filename")"
+  if [[ -z "$filename" ]]; then ui_error "Filename cannot be empty."; return 0; fi
+  if [[ "$filename" != *.desktop ]]; then filename="$filename.desktop"; fi
+
+  if desktop_import_entry "$src" "$filename"; then
+    ui_msg "Imported" "Imported to: $(desktop_user_dir)/$filename"
+  else
+    ui_error "Failed to import entry."
+  fi
+}
+
+desktop_ui_remove() {
+  local file
+  file="$(desktop_pick_entry)" || return 0
+  if [[ -z "$file" ]]; then return 0; fi
+
+  if ! ui_yesno "Remove .desktop" "Remove $(basename -- "$file")?\n\nThis cannot be undone."; then
+    return 0
+  fi
+
+  if desktop_remove_entry "$file"; then
+    ui_msg "Removed" "Removed: $file"
+  else
+    ui_error "Failed to remove entry."
+  fi
+}
+
+main_menu
+
