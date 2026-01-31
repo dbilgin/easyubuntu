@@ -152,12 +152,33 @@ desktop_ui_create() {
         desktop_choose_icon_from_container "$container_dir"
         if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=3; continue; fi
         icon="${UI_RESULT:-}"
+        if [[ -n "$icon" ]]; then
+          step=5
+        else
+          # User skipped auto icon (or none found) -> allow optional manual icon.
+          step=41
+        fi
+        ;;
+
+      41)
+        ui_input "Create .desktop" "Icon (optional: absolute path or icon name)" "$icon" "Next" "Back"
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=4; continue; fi
+        icon="$(trim "${UI_RESULT:-}")"
+        # If it looks like a path, best-effort validate existence.
+        if [[ -n "$icon" && "$icon" == *"/"* && ! -e "$icon" ]]; then
+          ui_error "Icon path not found: $icon"
+          continue
+        fi
         step=5
         ;;
 
       5)
         ui_input "Create .desktop" "Comment (optional)" "$comment" "Next" "Back"
-        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then step=4; continue; fi
+        if [[ "${UI_CANCELLED:-0}" -eq 1 ]]; then
+          # If user went through manual icon step, go back there; else go back to auto icon.
+          if [[ -z "${icon:-}" ]]; then step=41; else step=4; fi
+          continue
+        fi
         comment="${UI_RESULT:-}"
         step=6
         ;;
